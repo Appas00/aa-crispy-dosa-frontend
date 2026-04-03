@@ -1,66 +1,111 @@
-// Next.js API route: /api/dosa
-// Proxies requests to backend server
+// pages/api/dosa.js
 
-const API_BASE_URL = process.env.BACKEND_API_URL || 'http://localhost:5000';
+import clientPromise from "../../utils/db";
+import { ObjectId } from "mongodb";
 
 export default async function handler(req, res) {
-    const { method, query, body, headers } = req;
-
-    // Forward the authorization header if present
-    const authHeader = headers.authorization;
-
-    // Build the target URL
-    let targetUrl = `${API_BASE_URL}/api/dosa`;
-
-    // Handle query parameters
-    if (query && Object.keys(query).length > 0) {
-        const queryString = new URLSearchParams(query).toString();
-        targetUrl += `?${queryString}`;
-    }
-
-    // Handle dynamic routes (e.g., /api/dosa/:id)
-    if (query.id) {
-        targetUrl = `${API_BASE_URL}/api/dosa/${query.id}`;
-    }
-
-    if (query.type) {
-        targetUrl = `${API_BASE_URL}/api/dosa/type/${query.type}`;
-    }
-
     try {
-        // Prepare fetch options
-        const fetchOptions = {
-            method,
-            headers: {
-                'Content-Type': 'application/json',
-                ...(authHeader && { Authorization: authHeader }),
-            },
-        };
+        const client = await clientPromise;
+        const db = client.db("crispy-dosa");
 
-        // Add body for non-GET requests
-        if (method !== 'GET' && body) {
-            fetchOptions.body = JSON.stringify(body);
+        // GET all dosa
+        if (req.method === "GET") {
+            const { id, type } = req.query;
+
+            // GET dosa by ID
+            if (id) {
+                const dosa = await db
+                    .collection("dosa")
+                    .findOne({ _id: new ObjectId(id) });
+
+                if (!dosa) {
+                    return res.status(404).json({
+                        success: false,
+                        message: "Dosa not found",
+                    });
+                }
+
+                return res.status(200).json(dosa);
+            }
+
+            // GET dosa by type
+            if (type) {
+                const dosaList = await db
+                    .collection("dosa")
+                    .find({ type })
+                    .toArray();
+
+                return res.status(200).json(dosaList);
+            }
+
+            // GET all dosa
+            const dosaList = await db
+                .collection("dosa")
+                .find({})
+                .toArray();
+
+            return res.status(200).json(dosaList);
         }
 
-        // Make request to backend
-        const response = await fetch(targetUrl, fetchOptions);
-        const data = await response.json();
+        // ADD new dosa
+        if (req.method === "POST") {
+            const newDosa = req.body;
 
-        // Forward the response status and data
-        res.status(response.status).json(data);
+            const result = await db
+                .collection("dosa")
+                .insertOne(newDosa);
+
+            return res.status(201).json({
+                success: true,
+                insertedId: result.insertedId,
+            });
+        }
+
+        // UPDATE dosa
+        if (req.method === "PUT") {
+            const { id } = req.query;
+            const updatedData = req.body;
+
+            await db
+                .collection("dosa")
+                .updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: updatedData }
+                );
+
+            return res.status(200).json({
+                success: true,
+                message: "Dosa updated",
+            });
+        }
+
+        // DELETE dosa
+        if (req.method === "DELETE") {
+            const { id } = req.query;
+
+            await db
+                .collection("dosa")
+                .deleteOne({
+                    _id: new ObjectId(id),
+                });
+
+            return res.status(200).json({
+                success: true,
+                message: "Dosa deleted",
+            });
+        }
+
+        res.status(405).json({
+            success: false,
+            message: "Method not allowed",
+        });
+
     } catch (error) {
-        console.error('API Proxy Error:', error);
+        console.error(error);
+
         res.status(500).json({
             success: false,
-            message: 'Internal server error',
-            error: error.message,
+            message: "Server error",
         });
     }
 }
-
-// Disable body parser for file uploads if needed
-export const config = {
-    api: {
-        bodyParser: true,
-    },
-};

@@ -1,82 +1,127 @@
-// Next.js API route: /api/orders
-// Proxies requests to backend server
+// pages/api/orders.js
 
-const API_BASE_URL = process.env.BACKEND_API_URL || 'http://localhost:5000';
+import clientPromise from "../../utils/db";
+import { ObjectId } from "mongodb";
 
 export default async function handler(req, res) {
-    const { method, query, body, headers } = req;
-
-    // Forward the authorization header if present
-    const authHeader = headers.authorization;
-
-    // Build the target URL
-    let targetUrl = `${API_BASE_URL}/api/orders`;
-
-    // Handle query parameters
-    if (query && Object.keys(query).length > 0) {
-        const queryString = new URLSearchParams(query).toString();
-        targetUrl += `?${queryString}`;
-    }
-
-    // Handle dynamic routes
-    if (query.orderId) {
-        targetUrl = `${API_BASE_URL}/api/orders/${query.orderId}`;
-    }
-
-    if (query.trackId) {
-        targetUrl = `${API_BASE_URL}/api/orders/track/${query.trackId}`;
-    }
-
-    if (query.phone) {
-        targetUrl = `${API_BASE_URL}/api/orders/user/${query.phone}`;
-    }
-
-    if (query.status) {
-        targetUrl = `${API_BASE_URL}/api/orders/status/${query.status}`;
-    }
-
-    if (query.stats) {
-        targetUrl = `${API_BASE_URL}/api/orders/stats`;
-    }
-
-    // Handle order status update
-    if (query.updateStatus && query.orderId) {
-        targetUrl = `${API_BASE_URL}/api/orders/${query.orderId}/status`;
-    }
-
     try {
-        // Prepare fetch options
-        const fetchOptions = {
-            method,
-            headers: {
-                'Content-Type': 'application/json',
-                ...(authHeader && { Authorization: authHeader }),
-            },
-        };
+        const client = await clientPromise;
+        const db = client.db("crispy-dosa");
 
-        // Add body for non-GET requests
-        if (method !== 'GET' && body) {
-            fetchOptions.body = JSON.stringify(body);
+        // GET Orders
+        if (req.method === "GET") {
+            const { orderId, phone, status } = req.query;
+
+            // GET by order ID
+            if (orderId) {
+                const order = await db
+                    .collection("orders")
+                    .findOne({
+                        _id: new ObjectId(orderId),
+                    });
+
+                if (!order) {
+                    return res.status(404).json({
+                        success: false,
+                        message: "Order not found",
+                    });
+                }
+
+                return res.status(200).json(order);
+            }
+
+            // GET orders by phone
+            if (phone) {
+                const orders = await db
+                    .collection("orders")
+                    .find({ phone })
+                    .toArray();
+
+                return res.status(200).json(orders);
+            }
+
+            // GET orders by status
+            if (status) {
+                const orders = await db
+                    .collection("orders")
+                    .find({ status })
+                    .toArray();
+
+                return res.status(200).json(orders);
+            }
+
+            // GET all orders
+            const orders = await db
+                .collection("orders")
+                .find({})
+                .sort({ createdAt: -1 })
+                .toArray();
+
+            return res.status(200).json(orders);
         }
 
-        // Make request to backend
-        const response = await fetch(targetUrl, fetchOptions);
-        const data = await response.json();
+        // CREATE order
+        if (req.method === "POST") {
+            const orderData = req.body;
 
-        // Forward the response status and data
-        res.status(response.status).json(data);
+            orderData.createdAt = new Date();
+            orderData.status = "Pending";
+
+            const result = await db
+                .collection("orders")
+                .insertOne(orderData);
+
+            return res.status(201).json({
+                success: true,
+                orderId: result.insertedId,
+            });
+        }
+
+        // UPDATE order status
+        if (req.method === "PUT") {
+            const { orderId } = req.query;
+            const { status } = req.body;
+
+            await db
+                .collection("orders")
+                .updateOne(
+                    { _id: new ObjectId(orderId) },
+                    { $set: { status } }
+                );
+
+            return res.status(200).json({
+                success: true,
+                message: "Order status updated",
+            });
+        }
+
+        // DELETE order
+        if (req.method === "DELETE") {
+            const { orderId } = req.query;
+
+            await db
+                .collection("orders")
+                .deleteOne({
+                    _id: new ObjectId(orderId),
+                });
+
+            return res.status(200).json({
+                success: true,
+                message: "Order deleted",
+            });
+        }
+
+        res.status(405).json({
+            success: false,
+            message: "Method not allowed",
+        });
+
     } catch (error) {
-        console.error('API Proxy Error:', error);
+        console.error(error);
+
         res.status(500).json({
             success: false,
-            message: 'Internal server error',
-            error: error.message,
+            message: "Server error",
         });
     }
 }
-
-export const config = {
-    api: {
-        bodyParser: true,
-    },
-};

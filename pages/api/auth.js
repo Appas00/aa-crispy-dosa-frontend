@@ -1,71 +1,102 @@
-// Next.js API route: /api/auth
-// Proxies requests to backend server for authentication
+// pages/api/auth.js
 
-const API_BASE_URL = process.env.BACKEND_API_URL || 'http://localhost:5000';
+import clientPromise from "../../utils/db";
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
+
+const JWT_SECRET = process.env.JWT_SECRET || "crispy_dosa_secret";
 
 export default async function handler(req, res) {
-    const { method, query, body, headers } = req;
-
-    // Forward the authorization header if present
-    const authHeader = headers.authorization;
-
-    // Build the target URL
-    let targetUrl = `${API_BASE_URL}/api/auth`;
-
-    // Handle specific auth endpoints
-    if (query.login) {
-        targetUrl = `${API_BASE_URL}/api/auth/login`;
-    }
-
-    if (query.verify) {
-        targetUrl = `${API_BASE_URL}/api/auth/verify`;
-    }
-
-    if (query.profile) {
-        targetUrl = `${API_BASE_URL}/api/auth/profile`;
-    }
-
-    if (query.changePassword) {
-        targetUrl = `${API_BASE_URL}/api/auth/change-password`;
-    }
-
-    if (query.logout) {
-        targetUrl = `${API_BASE_URL}/api/auth/logout`;
-    }
-
     try {
-        // Prepare fetch options
-        const fetchOptions = {
-            method,
-            headers: {
-                'Content-Type': 'application/json',
-                ...(authHeader && { Authorization: authHeader }),
-            },
-        };
+        const client = await clientPromise;
+        const db = client.db("crispy-dosa");
 
-        // Add body for non-GET requests
-        if (method !== 'GET' && body) {
-            fetchOptions.body = JSON.stringify(body);
+        if (req.method === "POST") {
+            const { action } = req.body;
+
+            // LOGIN
+            if (action === "login") {
+                const { email, password } = req.body;
+
+                const user = await db.collection("users").findOne({ email });
+
+                if (!user) {
+                    return res.status(401).json({
+                        success: false,
+                        message: "User not found",
+                    });
+                }
+
+                const isMatch = await bcrypt.compare(
+                    password,
+                    user.password
+                );
+
+                if (!isMatch) {
+                    return res.status(401).json({
+                        success: false,
+                        message: "Invalid password",
+                    });
+                }
+
+                const token = jwt.sign(
+                    { id: user._id, email: user.email },
+                    JWT_SECRET,
+                    { expiresIn: "1d" }
+                );
+
+                return res.status(200).json({
+                    success: true,
+                    token,
+                    user: {
+                        email: user.email,
+                    },
+                });
+            }
+
+            // REGISTER
+            if (action === "register") {
+                const { email, password } = req.body;
+
+                const existingUser = await db
+                    .collection("users")
+                    .findOne({ email });
+
+                if (existingUser) {
+                    return res.status(400).json({
+                        success: false,
+                        message: "User already exists",
+                    });
+                }
+
+                const hashedPassword = await bcrypt.hash(
+                    password,
+                    10
+                );
+
+                await db.collection("users").insertOne({
+                    email,
+                    password: hashedPassword,
+                });
+
+                return res.status(200).json({
+                    success: true,
+                    message: "User registered",
+                });
+            }
         }
 
-        // Make request to backend
-        const response = await fetch(targetUrl, fetchOptions);
-        const data = await response.json();
+        res.status(405).json({
+            success: false,
+            message: "Method not allowed",
+        });
 
-        // Forward the response status and data
-        res.status(response.status).json(data);
     } catch (error) {
-        console.error('API Proxy Error:', error);
+        console.error(error);
+
         res.status(500).json({
             success: false,
-            message: 'Internal server error',
-            error: error.message,
+            message: "Server error",
         });
     }
 }
-
-export const config = {
-    api: {
-        bodyParser: true,
-    },
-};
